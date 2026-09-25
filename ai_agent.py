@@ -75,7 +75,7 @@ class AnomalyAIAgent:
             return self._generate_fallback_summary(summary_metrics, sample_anomalies, error_msg=self.init_error if self.api_key else None)
 
     def _call_gemini_analysis(self, summary_metrics: Dict[str, Any], sample_anomalies: list) -> Dict[str, str]:
-        """Calls Google Gemini model to summarize the anomalies."""
+        """Calls Google Gemini model to summarize the anomalies with auto-fallback if a model is deprecated/404."""
         prompt = f"""
 You are an expert Autonomous AI Data Quality & Anomaly Detection Agent.
 You have just analyzed a dataset and detected statistical and machine learning anomalies.
@@ -95,52 +95,74 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
   "email_body": "A professionally formatted plain text or markdown email body ready to be sent to stakeholders detailing the anomalies and urgent next steps."
 }}
 """
-        text = ""
-        # 1. Try modern google-genai client
-        if HAS_NEW_GENAI and self.client:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            text = response.text.strip()
-        # 2. Try legacy google-generativeai
-        elif HAS_LEGACY_GENAI:
-            model = legacy_genai.GenerativeModel(self.model_name)
-            response = model.generate_content(prompt)
-            text = response.text.strip()
-        else:
-            raise RuntimeError("No Gemini SDK available.")
-        
-        # Robust JSON extraction: search for outermost JSON object {...}
-        parsed = None
-        json_match = re.search(r"\{[\s\S]*\}", text)
-        if json_match:
-            try:
-                parsed = json.loads(json_match.group(0))
-            except Exception:
-                pass
+        # Candidate models to try in order if the selected model returns 404
+        candidate_models = [self.model_name]
+        for m in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]:
+            if m not in candidate_models:
+                candidate_models.append(m)
 
-        if parsed and isinstance(parsed, dict) and "executive_summary" in parsed:
-            return {
-                "executive_summary": parsed.get("executive_summary", ""),
-                "root_causes": parsed.get("root_causes", ""),
-                "recommendations": parsed.get("recommendations", ""),
-                "email_subject": parsed.get("email_subject", f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} outliers detected"),
-                "email_body": parsed.get("email_body", ""),
-                "source": f"Google Gemini ({self.model_name})",
-                "error_details": None
-            }
-        else:
-            # Fallback if model returned plain text rather than JSON
-            return {
-                "executive_summary": text,
-                "root_causes": "See detailed breakdown in the executive summary above.",
-                "recommendations": "Investigate flagged records with high anomaly scores.",
-                "email_subject": f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} anomalies detected ({summary_metrics['anomaly_percentage']}%)",
-                "email_body": text,
-                "source": f"Google Gemini ({self.model_name})",
-                "error_details": None
-            }
+        last_error = None
+        for model_to_try in candidate_models:
+            try:
+                text = ""
+                # 1. Try modern google-genai client
+                if HAS_NEW_GENAI and self.client:
+                    response = self.client.models.generate_content(
+                        model=model_to_try,
+                        contents=prompt
+                    )
+                    text = response.text.strip()
+                # 2. Try legacy google-generativeai
+                elif HAS_LEGACY_GENAI:
+                    model = legacy_genai.GenerativeModel(model_to_try)
+                    response = model.generate_content(prompt)
+                    text = response.text.strip()
+                else:
+                    raise RuntimeError("No Gemini SDK available.")
+                
+                # Robust JSON extraction: search for outermost JSON object {...}
+                parsed = None
+                json_match = re.search(r"\{[\s\S]*\}", text)
+                if json_match:
+                    try:
+                        parsed = json.loads(json_match.group(0))
+                    except Exception:
+                        pass
+
+                if parsed and isinstance(parsed, dict) and "executive_summary" in parsed:
+                    return {
+                        "executive_summary": parsed.get("executive_summary", ""),
+                        "root_causes": parsed.get("root_causes", ""),
+                        "recommendations": parsed.get("recommendations", ""),
+                        "email_subject": parsed.get("email_subject", f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} outliers detected"),
+                        "email_body": parsed.get("email_body", ""),
+                        "source": f"Google Gemini ({model_to_try})",
+                        "error_details": None
+                    }
+                else:
+                    return {
+                        "executive_summary": text,
+                        "root_causes": "See detailed breakdown in the executive summary above.",
+                        "recommendations": "Investigate flagged records with high anomaly scores.",
+                        "email_subject": f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} anomalies detected ({summary_metrics['anomaly_percentage']}%)",
+                        "email_body": text,
+                        "source": f"Google Gemini ({model_to_try})",
+                        "error_details": None
+                    }
+
+            except Exception as e:
+                err_str = str(e)
+                last_error = e
+                # If 404 or model not found, try the next candidate model
+                if "404" in err_str or "NOT_FOUND" in err_str or "not found" in err_str.lower():
+                    continue
+                else:
+                    # For auth/quota issues, fail immediately
+                    raise e
+
+        # If all candidates failed
+        if last_error:
+            raise last_error
 
     def _generate_fallback_summary(self, summary_metrics: Dict[str, Any], sample_anomalies: list, error_msg: Optional[str] = None) -> Dict[str, str]:
         """Intelligent rule-based fallback summary when API key is not configured or offline."""
