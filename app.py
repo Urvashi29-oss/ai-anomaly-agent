@@ -94,6 +94,13 @@ with st.sidebar:
         )
         if gemini_api_key:
             st.success("API Key detected")
+            if st.button("🧪 Verify Key & Detect Models"):
+                with st.spinner("Contacting Google API..."):
+                    ok, found_models, msg = AnomalyAIAgent.list_available_models(gemini_api_key)
+                    if ok and found_models:
+                        st.success(f"Key Verified! Active models ({len(found_models)}): {', '.join(found_models[:5])}")
+                    else:
+                        st.error(f"Verification issue: {msg}")
         else:
             st.info("💡 Without an API key, the agent will use its built-in rule intelligence engine.")
 

@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 
 # Try new google-genai SDK first, then legacy google.generativeai
 HAS_NEW_GENAI = False
@@ -62,6 +62,35 @@ class AnomalyAIAgent:
         else:
             self.init_error = "No API key configured"
 
+    @staticmethod
+    def list_available_models(api_key: str) -> Tuple[bool, list, str]:
+        """Lists models accessible with the given API key."""
+        if not api_key:
+            return False, [], "No API key provided."
+        try:
+            found = []
+            if HAS_LEGACY_GENAI:
+                try:
+                    legacy_genai.configure(api_key=api_key)
+                    for m in legacy_genai.list_models():
+                        if "generateContent" in getattr(m, "supported_generation_methods", []):
+                            found.append(m.name.replace("models/", ""))
+                except Exception as e:
+                    legacy_err = str(e)
+            if not found and HAS_NEW_GENAI:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    for m in client.models.list():
+                        name = getattr(m, "name", str(m)).replace("models/", "")
+                        found.append(name)
+                except Exception as e:
+                    new_err = str(e)
+            if found:
+                return True, found, f"Found {len(found)} supported models."
+            return False, [], "No generateContent models found. Ensure the 'Generative Language API' is enabled on your project at https://console.cloud.google.com/ or generate a new key at https://aistudio.google.com/."
+        except Exception as e:
+            return False, [], f"Google API error: {e}"
+
     def generate_summary(self, summary_metrics: Dict[str, Any], sample_anomalies: list) -> Dict[str, str]:
         """
         Generates comprehensive AI analysis, executive summary, and alert messages.
@@ -95,8 +124,15 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
   "email_body": "A professionally formatted plain text or markdown email body ready to be sent to stakeholders detailing the anomalies and urgent next steps."
 }}
 """
-        # Candidate models to try in order if the selected model returns 404
-        candidate_models = [self.model_name]
+        # Discover any available models for this specific key
+        ok, active_models, _ = self.list_available_models(self.api_key)
+        candidate_models = []
+        if self.model_name:
+            candidate_models.append(self.model_name)
+        if ok and active_models:
+            for am in active_models:
+                if am not in candidate_models:
+                    candidate_models.append(am)
         for m in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]:
             if m not in candidate_models:
                 candidate_models.append(m)
