@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import Dict, Any, Optional
 
 # Try new google-genai SDK first, then legacy google.generativeai
@@ -27,10 +28,22 @@ class AnomalyAIAgent:
     Supports both the modern google-genai SDK and legacy google-generativeai.
     """
     def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-1.5-flash"):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        # Check explicit parameter, then streamlit secrets if present, then environment variables
+        st_key = None
+        try:
+            import streamlit as st
+            if "GEMINI_API_KEY" in st.secrets:
+                st_key = str(st.secrets["GEMINI_API_KEY"]).strip()
+            elif "GOOGLE_API_KEY" in st.secrets:
+                st_key = str(st.secrets["GOOGLE_API_KEY"]).strip()
+        except Exception:
+            pass
+
+        self.api_key = api_key or st_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         self.model_name = model_name
         self.client = None
         self.client_ready = False
+        self.init_error = None
         
         if self.api_key:
             if HAS_NEW_GENAI:
@@ -38,14 +51,16 @@ class AnomalyAIAgent:
                     self.client = genai.Client(api_key=self.api_key)
                     self.client_ready = True
                 except Exception as e:
-                    print(f"Error initializing new google.genai client: {e}")
+                    self.init_error = f"google-genai client init error: {e}"
             
             if not self.client_ready and HAS_LEGACY_GENAI:
                 try:
                     legacy_genai.configure(api_key=self.api_key)
                     self.client_ready = True
                 except Exception as e:
-                    print(f"Error configuring legacy google.generativeai: {e}")
+                    self.init_error = f"google.generativeai configure error: {e}"
+        else:
+            self.init_error = "No API key configured"
 
     def generate_summary(self, summary_metrics: Dict[str, Any], sample_anomalies: list) -> Dict[str, str]:
         """
@@ -55,10 +70,9 @@ class AnomalyAIAgent:
             try:
                 return self._call_gemini_analysis(summary_metrics, sample_anomalies)
             except Exception as e:
-                print(f"Gemini call error: {e}. Falling back to rule-based agent analysis.")
                 return self._generate_fallback_summary(summary_metrics, sample_anomalies, error_msg=str(e))
         else:
-            return self._generate_fallback_summary(summary_metrics, sample_anomalies)
+            return self._generate_fallback_summary(summary_metrics, sample_anomalies, error_msg=self.init_error if self.api_key else None)
 
     def _call_gemini_analysis(self, summary_metrics: Dict[str, Any], sample_anomalies: list) -> Dict[str, str]:
         """Calls Google Gemini model to summarize the anomalies."""
@@ -97,33 +111,35 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
         else:
             raise RuntimeError("No Gemini SDK available.")
         
-        # Clean potential markdown fences
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+        # Robust JSON extraction: search for outermost JSON object {...}
+        parsed = None
+        json_match = re.search(r"\{[\s\S]*\}", text)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(0))
+            except Exception:
+                pass
 
-        try:
-            parsed = json.loads(text)
+        if parsed and isinstance(parsed, dict) and "executive_summary" in parsed:
             return {
                 "executive_summary": parsed.get("executive_summary", ""),
                 "root_causes": parsed.get("root_causes", ""),
                 "recommendations": parsed.get("recommendations", ""),
                 "email_subject": parsed.get("email_subject", f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} outliers detected"),
                 "email_body": parsed.get("email_body", ""),
-                "source": f"Google Gemini ({self.model_name})"
+                "source": f"Google Gemini ({self.model_name})",
+                "error_details": None
             }
-        except json.JSONDecodeError:
+        else:
+            # Fallback if model returned plain text rather than JSON
             return {
                 "executive_summary": text,
-                "root_causes": "Refer to executive summary above.",
+                "root_causes": "See detailed breakdown in the executive summary above.",
                 "recommendations": "Investigate flagged records with high anomaly scores.",
                 "email_subject": f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} anomalies detected ({summary_metrics['anomaly_percentage']}%)",
                 "email_body": text,
-                "source": f"Google Gemini ({self.model_name})"
+                "source": f"Google Gemini ({self.model_name})",
+                "error_details": None
             }
 
     def _generate_fallback_summary(self, summary_metrics: Dict[str, Any], sample_anomalies: list, error_msg: Optional[str] = None) -> Dict[str, str]:
@@ -198,5 +214,6 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
             "recommendations": recommendations,
             "email_subject": email_subj,
             "email_body": email_body,
-            "source": source_info
+            "source": source_info,
+            "error_details": error_msg
         }

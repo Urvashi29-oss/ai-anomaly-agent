@@ -66,12 +66,21 @@ if "ai_analysis" not in st.session_state:
 if "email_log" not in st.session_state:
     st.session_state.email_log = []
 
+# Helper to read credentials from st.secrets or os.getenv
+def get_secret(key: str, default: str = "") -> str:
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key]).strip()
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
 # Sidebar Configuration
 with st.sidebar:
     st.title("⚙️ Agent Settings")
     
     with st.expander("🤖 Gemini AI Configuration", expanded=True):
-        default_gemini_key = os.getenv("GEMINI_API_KEY", "")
+        default_gemini_key = get_secret("GEMINI_API_KEY", "")
         gemini_api_key = st.text_input(
             "Gemini API Key",
             value=default_gemini_key,
@@ -80,7 +89,7 @@ with st.sidebar:
         )
         gemini_model = st.selectbox(
             "Model Selection",
-            ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"],
+            ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"],
             index=0
         )
         if gemini_api_key:
@@ -101,19 +110,19 @@ with st.sidebar:
             default_host = "smtp.office365.com"
             default_port = 587
         else:
-            default_host = os.getenv("SMTP_SERVER", "smtp.example.com")
-            default_port = int(os.getenv("SMTP_PORT", 587))
+            default_host = get_secret("SMTP_SERVER", "smtp.example.com")
+            default_port = int(get_secret("SMTP_PORT", "587"))
 
         smtp_server = st.text_input("SMTP Server", value=default_host)
         smtp_port = st.number_input("SMTP Port", value=default_port, step=1)
-        sender_email = st.text_input("Sender Email", value=os.getenv("SENDER_EMAIL", ""))
+        sender_email = st.text_input("Sender Email", value=get_secret("SENDER_EMAIL", ""))
         sender_password = st.text_input(
             "App Password / Password",
-            value=os.getenv("SENDER_PASSWORD", ""),
+            value=get_secret("SENDER_PASSWORD", ""),
             type="password",
             help="For Gmail, create an App Password in your Google Account security settings."
         )
-        default_recipients = st.text_input("Default Recipient(s)", value=os.getenv("ALERT_RECIPIENT", ""))
+        default_recipients = st.text_input("Default Recipient(s)", value=get_secret("ALERT_RECIPIENT", ""))
 
         if st.button("🧪 Test SMTP Connection"):
             if not sender_email or not sender_password:
@@ -314,8 +323,17 @@ with tab_ai:
 
         if st.session_state.ai_analysis is not None:
             analysis = st.session_state.ai_analysis
+            source_name = analysis.get("source", "AI System")
             
-            st.caption(f"Intelligence Provider: **{analysis.get('source', 'AI System')}**")
+            # Show provider status
+            if "Google Gemini" in source_name:
+                st.success(f"✨ Intelligence Provider: **{source_name}**")
+            else:
+                st.info(f"ℹ️ Intelligence Provider: **{source_name}**")
+
+            # Surface any Gemini API issues if present
+            if analysis.get("error_details"):
+                st.warning(f"⚠️ **Gemini API Notice:** {analysis['error_details']}\n\nFalling back to intelligent rule-based analysis. Please verify your API key or quota if you intended to use Google Gemini.")
 
             # Executive Summary Card
             with st.container():
