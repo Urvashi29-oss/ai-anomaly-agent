@@ -6,9 +6,12 @@ import plotly.graph_objects as go
 import os
 import io
 from dotenv import load_dotenv
+import importlib
+import ai_agent
+importlib.reload(ai_agent)
+from ai_agent import AnomalyAIAgent
 
 from detector import AnomalyDetector
-from ai_agent import AnomalyAIAgent
 from email_alerter import EmailAlerter
 from sample_data import generate_financial_dataset, generate_server_metrics_dataset
 
@@ -89,9 +92,15 @@ with st.sidebar:
         )
         gemini_model = st.selectbox(
             "Model Selection",
-            ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+            ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
             index=0
         )
+        if st.session_state.get("prev_gemini_model") != gemini_model:
+            st.session_state["prev_gemini_model"] = gemini_model
+            st.session_state.ai_analysis = None
+        if st.session_state.get("prev_gemini_key") != gemini_api_key:
+            st.session_state["prev_gemini_key"] = gemini_api_key
+            st.session_state.ai_analysis = None
         if gemini_api_key:
             st.success("API Key detected")
             if st.button("🧪 Verify Key & Detect Models"):

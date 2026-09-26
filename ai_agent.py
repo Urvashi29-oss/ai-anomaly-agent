@@ -74,7 +74,9 @@ class AnomalyAIAgent:
                     legacy_genai.configure(api_key=api_key)
                     for m in legacy_genai.list_models():
                         if "generateContent" in getattr(m, "supported_generation_methods", []):
-                            found.append(m.name.replace("models/", ""))
+                            name = m.name.replace("models/", "")
+                            if not any(x in name.lower() for x in ["tts", "audio", "embed", "imagen", "veo"]):
+                                found.append(name)
                 except Exception as e:
                     legacy_err = str(e)
             if not found and HAS_NEW_GENAI:
@@ -82,7 +84,11 @@ class AnomalyAIAgent:
                     client = genai.Client(api_key=api_key)
                     for m in client.models.list():
                         name = getattr(m, "name", str(m)).replace("models/", "")
-                        found.append(name)
+                        actions = getattr(m, "supported_actions", []) or []
+                        if actions and "generateContent" not in actions:
+                            continue
+                        if not any(x in name.lower() for x in ["tts", "audio", "embed", "imagen", "veo"]):
+                            found.append(name)
                 except Exception as e:
                     new_err = str(e)
             if found:
@@ -124,18 +130,19 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
   "email_body": "A professionally formatted plain text or markdown email body ready to be sent to stakeholders detailing the anomalies and urgent next steps."
 }}
 """
-        # Discover any available models for this specific key
-        ok, active_models, _ = self.list_available_models(self.api_key)
+        # Restrict candidate models strictly to stable text-generation models
         candidate_models = []
         if self.model_name:
             candidate_models.append(self.model_name)
-        if ok and active_models:
-            for am in active_models:
-                if am not in candidate_models:
-                    candidate_models.append(am)
-        for m in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-pro"]:
+        for m in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
             if m not in candidate_models:
                 candidate_models.append(m)
+
+        # Strictly exclude any non-text or TTS/audio models
+        candidate_models = [
+            m for m in candidate_models
+            if not any(x in m.lower() for x in ["tts", "audio", "embed", "imagen", "veo"])
+        ]
 
         last_error = None
         for model_to_try in candidate_models:
@@ -189,11 +196,11 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
             except Exception as e:
                 err_str = str(e)
                 last_error = e
-                # If 404 or model not found, try the next candidate model
-                if "404" in err_str or "NOT_FOUND" in err_str or "not found" in err_str.lower():
+                # If model not found, unsupported modality, or quota limit (429), try next candidate
+                if any(x in err_str.lower() for x in ["404", "not_found", "not found", "400", "invalid_argument", "modalities", "429", "resource_exhausted"]):
                     continue
                 else:
-                    # For auth/quota issues, fail immediately
+                    # For invalid auth credentials, fail immediately
                     raise e
 
         # If all candidates failed
