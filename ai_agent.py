@@ -182,12 +182,26 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
                         pass
 
                 if parsed and isinstance(parsed, dict) and "executive_summary" in parsed:
+                    def _format_text_field(val: Any) -> str:
+                        if isinstance(val, list):
+                            items = []
+                            for i, item in enumerate(val, 1):
+                                s = str(item).strip()
+                                if not s.startswith(("-", "*", "•")) and not (len(s) > 2 and s[0].isdigit() and s[1] in [".", ")"]):
+                                    items.append(f"{i}. {s}")
+                                else:
+                                    items.append(s)
+                            return "\n".join(items)
+                        elif isinstance(val, dict):
+                            return "\n".join(f"- **{k}**: {v}" for k, v in val.items())
+                        return str(val or "")
+
                     return {
-                        "executive_summary": parsed.get("executive_summary", ""),
-                        "root_causes": parsed.get("root_causes", ""),
-                        "recommendations": parsed.get("recommendations", ""),
-                        "email_subject": parsed.get("email_subject", f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} outliers detected"),
-                        "email_body": parsed.get("email_body", ""),
+                        "executive_summary": _format_text_field(parsed.get("executive_summary", "")),
+                        "root_causes": _format_text_field(parsed.get("root_causes", "")),
+                        "recommendations": _format_text_field(parsed.get("recommendations", "")),
+                        "email_subject": str(parsed.get("email_subject", f"🚨 Anomaly Alert: {summary_metrics['anomaly_count']} outliers detected")),
+                        "email_body": _format_text_field(parsed.get("email_body", "")),
                         "source": f"Google Gemini ({model_to_try})",
                         "error_details": None
                     }

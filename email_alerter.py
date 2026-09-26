@@ -111,10 +111,17 @@ class EmailAlerter:
         else:
             table_html = "<p style='color: #64748b;'>No anomalous records found.</p>"
 
-        # Parse executive summary bullet points or paragraphs
-        exec_text = ai_analysis.get("executive_summary", "No summary provided.").replace("\n", "<br>")
-        root_causes = ai_analysis.get("root_causes", "").replace("\n", "<br>")
-        recommendations = ai_analysis.get("recommendations", "").replace("\n", "<br>")
+        # Parse executive summary bullet points or paragraphs safely
+        def _to_html(val: Any) -> str:
+            if isinstance(val, list):
+                return "<br>".join(f"• {item}" for item in val)
+            elif isinstance(val, dict):
+                return "<br>".join(f"• <strong>{k}</strong>: {v}" for k, v in val.items())
+            return str(val or "").replace("\n", "<br>")
+
+        exec_text = _to_html(ai_analysis.get("executive_summary", "No summary provided."))
+        root_causes = _to_html(ai_analysis.get("root_causes", ""))
+        recommendations = _to_html(ai_analysis.get("recommendations", ""))
 
         html = f"""
         <!DOCTYPE html>
