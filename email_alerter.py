@@ -226,20 +226,19 @@ class EmailAlerter:
             return False, "Sender email and password must be configured in settings."
 
         try:
-            msg = MIMEMultipart("alternative")
+            # Correct MIME hierarchy: 'mixed' root container with 'alternative' body and attachments
+            msg = MIMEMultipart("mixed")
             msg["Subject"] = subject
             msg["From"] = self.sender_email
             msg["To"] = ", ".join(recipient_emails)
 
-            # Plain text part
+            body_container = MIMEMultipart("alternative")
             plain_text = ai_analysis.get("email_body", "Anomaly detected in dataset.")
-            part_text = MIMEText(plain_text, "plain")
-            msg.attach(part_text)
+            body_container.attach(MIMEText(plain_text, "plain"))
 
-            # HTML part
             html_content = self.build_html_report(summary_metrics, ai_analysis, anomaly_df)
-            part_html = MIMEText(html_content, "html")
-            msg.attach(part_html)
+            body_container.attach(MIMEText(html_content, "html"))
+            msg.attach(body_container)
 
             # Optional CSV Attachment of anomalies
             if attach_csv and not anomaly_df.empty:
