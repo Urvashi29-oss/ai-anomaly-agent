@@ -211,17 +211,27 @@ with tab_data:
             help="Supports CSV and Excel tabular data with numerical attributes."
         )
         if uploaded_file is not None:
-            try:
-                if uploaded_file.name.endswith(".csv"):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_excel(uploaded_file)
-                st.session_state.df_raw = df
-                st.session_state.detection_results = None
-                st.session_state.ai_analysis = None
-                st.success(f"Successfully loaded '{uploaded_file.name}' ({len(df):,} records, {len(df.columns)} columns)")
-            except Exception as e:
-                st.error(f"Error loading file: {e}")
+            current_file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            # Only reload and reset state if a new/different file was uploaded
+            if st.session_state.get("uploaded_file_id") != current_file_id:
+                try:
+                    if uploaded_file.name.endswith(".csv"):
+                        df = pd.read_csv(uploaded_file)
+                    else:
+                        df = pd.read_excel(uploaded_file)
+                    st.session_state.df_raw = df
+                    st.session_state.uploaded_file_id = current_file_id
+                    st.session_state.detection_results = None
+                    st.session_state.ai_analysis = None
+                    st.success(f"Successfully loaded '{uploaded_file.name}' ({len(df):,} records, {len(df.columns)} columns)")
+                except Exception as e:
+                    st.error(f"Error loading file: {e}")
+        elif st.session_state.get("uploaded_file_id") not in ["sample_financial", "sample_server", None]:
+            # File was cleared/removed from file uploader
+            st.session_state.df_raw = None
+            st.session_state.uploaded_file_id = None
+            st.session_state.detection_results = None
+            st.session_state.ai_analysis = None
 
     with col_sample:
         st.markdown("##### Or load realistic sample dataset:")
@@ -229,12 +239,14 @@ with tab_data:
         with col_s1:
             if st.button("💳 Financial Fraud Sample", use_container_width=True):
                 st.session_state.df_raw = generate_financial_dataset(500, anomaly_ratio=0.05)
+                st.session_state.uploaded_file_id = "sample_financial"
                 st.session_state.detection_results = None
                 st.session_state.ai_analysis = None
                 st.success("Loaded Financial Transactions sample (500 records)")
         with col_s2:
             if st.button("🖥️ Server Metrics Sample", use_container_width=True):
                 st.session_state.df_raw = generate_server_metrics_dataset(500, anomaly_ratio=0.05)
+                st.session_state.uploaded_file_id = "sample_server"
                 st.session_state.detection_results = None
                 st.session_state.ai_analysis = None
                 st.success("Loaded Server Performance Telemetry (500 records)")
