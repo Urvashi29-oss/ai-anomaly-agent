@@ -130,18 +130,27 @@ Respond with a JSON object ONLY (no markdown fences, pure JSON) with the followi
   "email_body": "A professionally formatted plain text or markdown email body ready to be sent to stakeholders detailing the anomalies and urgent next steps."
 }}
 """
-        # Restrict candidate models strictly to stable text-generation models
+        # Discover active models for this key and filter strictly to text models
+        ok, active_models, _ = self.list_available_models(self.api_key)
+        valid_active_text_models = [
+            m for m in active_models
+            if not any(x in m.lower() for x in ["tts", "audio", "embed", "imagen", "veo", "preview-tts"])
+        ] if ok and active_models else []
+
         candidate_models = []
         if self.model_name:
             candidate_models.append(self.model_name)
-        for m in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+        for am in valid_active_text_models:
+            if am not in candidate_models:
+                candidate_models.append(am)
+        for m in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]:
             if m not in candidate_models:
                 candidate_models.append(m)
 
         # Strictly exclude any non-text or TTS/audio models
         candidate_models = [
             m for m in candidate_models
-            if not any(x in m.lower() for x in ["tts", "audio", "embed", "imagen", "veo"])
+            if not any(x in m.lower() for x in ["tts", "audio", "embed", "imagen", "veo", "preview-tts"])
         ]
 
         last_error = None
